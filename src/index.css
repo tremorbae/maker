@@ -1783,6 +1783,17 @@ select option {
  * Fork additions (not in the original Maker): video playback bar. Reuses the original tokens and slider styling.
  * ------------------------------------------------------------------------------------------------------------- */
 
+/* The source video behind the dithered canvas: invisible but still rendered, since phones may stop decoding
+   frames for a display: none video. */
+.artwork .hidden-video {
+  opacity: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0
+}
+
 .video-bar {
   align-items: center;
   gap: 12px;

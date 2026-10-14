@@ -37,6 +37,11 @@ Deploys to Vercel as a static site; `vercel.json` has the SPA rewrite.
 Upload an MP4, MOV, or WebM of any length, file size, or resolution. The video goes through the same pipeline as an image:
 
 - **Preview.** Play and scrub the video with the settings applied live. When paused, the current frame renders through the exact image path.
+- **Opening on phones.** Phones often won't load a paused video that isn't on screen, and Safari can report a frame before it can draw it. So opening a video works in steps until one succeeds:
+  - wait for a frame that can actually be drawn (`requestVideoFrameCallback`);
+  - seek to the start;
+  - play muted, then rewind;
+  - decode the first frame with WebCodecs, for iPhone Low Power Mode, which blocks muted play. This last step takes about 8 s.
 - **Extra colors** are sampled once, from the first frame, so they don't flicker between frames.
 - **MP4.** Frame-accurate decode → dither → H.264 encode using WebCodecs ([mediabunny](https://mediabunny.dev)).
   - Keeps the source frame rate.

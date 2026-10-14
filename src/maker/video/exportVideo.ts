@@ -13,9 +13,10 @@ import {
   type Target,
   type VideoSample,
 } from 'mediabunny';
-import { hexToRgb, loadLogo, workingSize, type LogoSettings, type MakerOptions, type RGB } from '../pipeline';
+import { createCanvas, hexToRgb, loadLogo, workingSize, type LogoSettings, type MakerOptions, type RGB } from '../pipeline';
 import { ExportCanceledError, GIF_FPS, GIF_MAX_SECONDS, GIF_MAX_SIDE } from './constants';
 import { FrameRenderer, type FrameLogo } from './frameRenderer';
+import type { VideoInfo } from './media';
 
 /**
  * H.264 bits per dither cell (one working-size pixel) per frame. Upscaling adds pixels but no detail, so the budget
@@ -121,6 +122,22 @@ async function openVideoTrack(file: File) {
     throw new Error('This video could not be decoded in this browser. Try an MP4 (H.264) file.');
   }
   return { input, track };
+}
+
+/** Size, duration and first frame via WebCodecs, for browsers whose <video> element won't produce a frame. */
+export async function readFirstFrame(file: File): Promise<VideoInfo> {
+  if (!videoCodecsAvailable()) throw new Error('This video could not be opened on this device. Try an MP4 (H.264) file.');
+  const { input, track } = await openVideoTrack(file);
+  try {
+    const sample = await new VideoSampleSink(track).getSample(Math.max(0, await track.getFirstTimestamp()));
+    if (!sample) throw new Error('This video has no readable frames.');
+    const { canvas, context } = createCanvas(sample.displayWidth, sample.displayHeight);
+    sample.draw(context, 0, 0, canvas.width, canvas.height);
+    sample.close();
+    return { width: canvas.width, height: canvas.height, duration: await input.computeDuration(), poster: canvas };
+  } finally {
+    input.dispose();
+  }
 }
 
 const renderSample = (renderer: FrameRenderer, sample: VideoSample, job: VideoExportJob, width: number, height: number, logo: FrameLogo | null) =>

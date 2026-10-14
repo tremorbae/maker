@@ -33,7 +33,7 @@ import {
 } from './pipeline';
 import { ExportCanceledError, GIF_FPS, GIF_MAX_SECONDS } from './video/constants';
 import { FrameRenderer } from './video/frameRenderer';
-import { VIDEO_TYPES, formatTime, probeVideo, snapshotVideo } from './video/media';
+import { VIDEO_TYPES, formatTime, probeVideo, snapshotVideo, watchSeekFrames } from './video/media';
 
 const LOGO_SRC = '/brand/derpetual-logo.png';
 const SAMPLE_SRC = '/derpetual-sample.png';
@@ -225,7 +225,7 @@ export default function Maker() {
       setOpening(true);
       setError('');
       try {
-        const info = await probeVideo(url);
+        const info = await probeVideo(file, url);
         if (loadId !== loadIdRef.current) {
           URL.revokeObjectURL(url);
           return;
@@ -385,6 +385,15 @@ export default function Maker() {
     const timer = window.setTimeout(() => setNotice(''), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  // Scrubbing while paused re-renders the still once the new frame can be drawn.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (source?.kind !== 'video' || !video) return;
+    return watchSeekFrames(video, () => {
+      if (video.paused) captureStill();
+    });
+  }, [source]);
 
   /** Freezes the frame the video is showing so the exact still pipeline renders it. */
   const captureStill = () => {
@@ -636,7 +645,7 @@ export default function Maker() {
                     <video
                       key={source.url}
                       ref={videoRef}
-                      className={view === 'original' ? 'original-image' : 'hidden-canvas'}
+                      className={view === 'original' ? 'original-image' : 'hidden-video'}
                       src={source.url}
                       aria-label="Original uploaded video"
                       playsInline
@@ -646,9 +655,6 @@ export default function Maker() {
                       onPause={() => {
                         setPlaying(false);
                         captureStill();
-                      }}
-                      onSeeked={() => {
-                        if (videoRef.current?.paused) captureStill();
                       }}
                     />
                   )}
