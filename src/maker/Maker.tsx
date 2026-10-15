@@ -107,6 +107,9 @@ const previewSize = (source: Source) => {
   return { width, height: Math.max(1, Math.round((width * source.height) / source.width)) };
 };
 
+/** A video export that goes this long (while the tab is visible) without finishing a frame is treated as stuck. */
+const EXPORT_STALL_MS = 60_000;
+
 /** "45 s left", "12 min left", "1 h 20 min left". */
 const formatRemaining = (seconds: number) => {
   if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s left`;
@@ -431,9 +434,14 @@ export default function Maker() {
     setExportProgress({ progress: 0, secondsLeft: null });
     const startedAt = performance.now();
     let lastUpdate = 0;
+    let lastProgress = 0;
+    let lastActivity = startedAt;
+    let stalled = false;
     // Progress fires every frame; re-render a few times a second instead (a movie is ~150k frames).
     const reportProgress = (progress: number) => {
       const now = performance.now();
+      lastActivity = now;
+      lastProgress = progress;
       if (now - lastUpdate < 250 && progress < 1) return;
       lastUpdate = now;
       const elapsed = (now - startedAt) / 1000;
@@ -441,6 +449,20 @@ export default function Maker() {
       const secondsLeft = progress > 0.005 && elapsed > 3 ? (elapsed / progress) * (1 - progress) : null;
       setExportProgress({ progress, secondsLeft });
     };
+    // A step that never finishes would otherwise leave the button spinning: give up after a minute without a frame.
+    // Only visible time counts, since browsers throttle background tabs.
+    const watchdog = window.setInterval(() => {
+      const now = performance.now();
+      if (document.visibilityState !== 'visible') lastActivity = now;
+      else if (now - lastActivity > EXPORT_STALL_MS) {
+        stalled = true;
+        controller.abort();
+      }
+    }, 1000);
+    // Settles on Cancel (or a stall) even when the export itself is stuck in a step that can't be interrupted.
+    const canceled = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(new ExportCanceledError()), { once: true });
+    });
     setError('');
     try {
       const job = {
@@ -453,9 +475,11 @@ export default function Maker() {
         onProgress: reportProgress,
         signal: controller.signal,
       };
-      const { exportGif, exportMp4 } = await import('./video/exportVideo');
+      const { exportGif, exportMp4 } = await import('./video/exportVideo').catch(() => {
+        throw new Error('Maker was just updated. Reload the page to export your video.');
+      });
       if (controller.signal.aborted) throw new ExportCanceledError();
-      const { blob, audioDropped } = videoFormat === 'gif' ? await exportGif(job) : await exportMp4(job);
+      const { blob, audioDropped } = await Promise.race([videoFormat === 'gif' ? exportGif(job) : exportMp4(job), canceled]);
       saveBlob(blob, `${fileStem(video.name)}-derpetual.${videoFormat}`);
       setNotice(audioDropped ? 'Your Derpetual video is ready. This browser couldn’t keep the audio.' : 'Your Derpetual video is ready.');
       track('maker_video_downloaded', {
@@ -465,10 +489,16 @@ export default function Maker() {
         duration_seconds: Math.round(video.duration),
       });
     } catch (err) {
-      if (!(err instanceof ExportCanceledError)) {
+      if (stalled) {
+        console.warn('Video export stalled', { format: videoFormat, size: exportSize, progress: lastProgress, error: err });
+        setError(
+          `The export stopped at ${Math.floor(lastProgress * 100)}%. Try again, or choose Working size${videoFormat === 'mp4' ? '' : ' or MP4'}.`,
+        );
+      } else if (!(err instanceof ExportCanceledError)) {
         setError(err instanceof Error ? err.message : 'The export failed. Please try again.');
       }
     } finally {
+      window.clearInterval(watchdog);
       exportAbortRef.current = null;
       setExporting(false);
       setExportProgress(null);

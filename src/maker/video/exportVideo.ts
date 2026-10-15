@@ -152,8 +152,19 @@ const renderSample = (renderer: FrameRenderer, sample: VideoSample, job: VideoEx
     logo,
   );
 
-/** Runs decode → dither → H.264 encode (audio copied or converted to AAC) into `sink`. Returns whether audio was lost. */
-async function convertToMp4(input: Input, sink: OutputSink, job: VideoExportJob, width: number, height: number, bitrate: number) {
+/**
+ * Runs decode → dither → H.264 encode (audio copied or converted to AAC) into `sink`. Returns whether audio was lost.
+ * `onFrame` gets each rendered frame's end time.
+ */
+async function convertToMp4(
+  input: Input,
+  sink: OutputSink,
+  job: VideoExportJob,
+  width: number,
+  height: number,
+  bitrate: number,
+  onFrame: (endTimestamp: number) => void,
+) {
   const renderer = new FrameRenderer({ exact: false });
   const logo = await frameLogo(job.logo);
   // Streamed files put the index at the end (standard for camera files); in-memory ones can move it to the front.
@@ -169,14 +180,17 @@ async function convertToMp4(input: Input, sink: OutputSink, job: VideoExportJob,
       allowTransformationMetadata: false,
       processedWidth: width,
       processedHeight: height,
-      process: (sample) => renderSample(renderer, sample, job, width, height, logo),
+      process: (sample) => {
+        const frame = renderSample(renderer, sample, job, width, height, logo);
+        onFrame(sample.timestamp + sample.duration);
+        return frame;
+      },
     },
     audio: { codec: 'aac' },
   });
   if (!conversion.isValid || conversion.discardedTracks.some((t) => t.track.type === 'video')) {
     throw new Error('This video could not be converted in this browser. Try an MP4 (H.264) file.');
   }
-  conversion.onProgress = (progress) => job.onProgress(progress);
   const abort = () => void conversion.cancel();
   job.signal.addEventListener('abort', abort, { once: true });
   try {
@@ -206,9 +220,14 @@ export async function exportMp4(job: VideoExportJob): Promise<VideoExportResult>
     if (!(await canEncodeVideo('avc', { width, height, bitrate }))) {
       throw new Error('This browser can’t encode MP4 at this size. Try Working size.');
     }
+    // Progress follows the video frames. mediabunny's own progress is the slowest track's, which sits at 0% for the
+    // whole export when the audio track is empty or ends early (common in screen recordings and edited clips).
+    const start = Math.max(0, await track.getFirstTimestamp());
+    const span = Math.max(1e-6, (await track.computeDuration()) - start);
+    const onFrame = (end: number) => job.onProgress(Math.min(1, Math.max(0, (end - start) / span)));
     const sink = await openOutputSink('mp4');
     try {
-      const audioDropped = await convertToMp4(input, sink, job, width, height, bitrate);
+      const audioDropped = await convertToMp4(input, sink, job, width, height, bitrate, onFrame);
       return { blob: await sink.finish(), audioDropped, streamed: sink.streamed };
     } catch (error) {
       await sink.discard();

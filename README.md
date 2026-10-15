@@ -58,6 +58,10 @@ Upload an MP4, MOV, or WebM of any length, file size, or resolution. The video g
   - The color table is the exact dither palette, so frames are pixel-identical to the image pipeline.
   - With the logo on, its anti-aliased edge snaps to a 16-step blend ramp (max error 8/255).
 - **Export flow.** Export shows progress and can be canceled. The ~560 KB of video code loads only when someone exports a video.
+  - Progress follows the video frames, so clips whose audio is shorter than the picture don't sit at 0%.
+  - Cancel takes effect immediately, even if a step is stuck.
+  - An export with no new frame for 60 s (while the tab is visible) stops with an error instead of spinning.
+  - If a deploy happened while the page was open, export asks for a reload. `vercel.json` returns a real 404 for missing `/assets/` files, not the app page.
 - **Browsers.** Export needs WebCodecs: current Chrome, Edge, Safari, or Firefox.
 
 ## Deviations from the original
